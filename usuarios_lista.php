@@ -64,9 +64,14 @@ $usuarios = $db->Query($sql);
                 </h1>
                 <p class="text-sm text-slate-500 mt-1">Consulte, edite ou altere as credenciais dos corretores e colaboradores do sistema.</p>
             </div>
-            <a href="usuario.php" class="btn-3d bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-5 rounded-lg flex items-center justify-center gap-2 self-start md:self-auto">
-                <i class="fas fa-plus"></i> Cadastrar Novo
-            </a>
+            <div class="flex items-center gap-3 self-start md:self-auto">
+                <a href="index.php" class="btn-3d bg-slate-700 hover:bg-slate-800 text-white font-bold py-2.5 px-5 rounded-lg flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-house"></i> Home
+                </a>
+                <a href="usuario.php" class="btn-3d bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-5 rounded-lg flex items-center justify-center gap-2">
+                    <i class="fas fa-plus"></i> Cadastrar Novo
+                </a>
+            </div>
         </div>
 
         <div class="bg-white p-4 rounded-2xl shadow-md border border-slate-200 mb-6">

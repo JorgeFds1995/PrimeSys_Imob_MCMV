@@ -21,6 +21,105 @@ $db = new Database();
 $id_usuario_logado = intval($_SESSION['usuario_id']);
 $is_master         = (bool)$_SESSION['is_master'];
 
+// Processamento do formulário de Distribuição de Leads (Modal)
+$msg_distribuicao = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao_distribuir_lead'])) {
+    if ($is_master) {
+        $nome_lead = str_replace("'", "''", trim($_POST['nome'] ?? ''));
+        $telefone1 = preg_replace('/\D/', '', $_POST['telefone'] ?? '');
+        $id_empreendimento = !empty($_POST['id_empreendimento']) ? intval($_POST['id_empreendimento']) : 0;
+        
+        if (!empty($nome_lead) && $id_empreendimento > 0) {
+            // 1. Organizar os corretores (tabela usuarios em que a coluna corretor estiver como true por id_usuario)
+            $corretores = $db->Query("SELECT id_usuario FROM usuarios WHERE corretor = 1 OR corretor = true ORDER BY id_usuario ASC");
+            
+            if (!empty($corretores)) {
+                // 2. Verificar na tabela distribuicao_leads na coluna ultimo_corretor qual o último id que recebeu lead
+                $tabela_dist = $db->Query("SELECT ultimo_corretor FROM distribuicao_leads LIMIT 1");
+                $ultimo_id = !empty($tabela_dist) ? intval($tabela_dist[0]['ultimo_corretor']) : 0;
+                
+                // Encontrar o índice do próximo corretor a partir do último
+                $proximo_corretor_id = 0;
+                $encontrou_indice = false;
+                
+                // Primeira tentativa: encontrar o próximo após o último_id
+                foreach ($corretores as $corr) {
+                    if ($encontrou_indice) {
+                        $proximo_corretor_id = intval($corr['id_usuario']);
+                        break;
+                    }
+                    if (intval($corr['id_usuario']) === $ultimo_id) {
+                        $encontrou_indice = true;
+                    }
+                }
+                
+                // Se chegou ao fim da lista ou não encontrou, pega o primeiro da lista (volta ao ciclo)
+                if ($proximo_corretor_id === 0 && !empty($corretores)) {
+                    $proximo_corretor_id = intval($corretores[0]['id_usuario']);
+                }
+                
+                // 3. Validação: se o corretor que era pra receber o lead, tem algum lead pertencente a ele na tabela clientes com a coluna status_lead igual a 'Lead', pula ele e vai pro próximo.
+                $candidatos = [];
+                // Reordena a lista de corretores começando a partir do $proximo_corretor_id
+                $lista_ordenada = [];
+                $passou = false;
+                foreach ($corretores as $corr) {
+                    $uid = intval($corr['id_usuario']);
+                    if ($uid === $proximo_corretor_id) {
+                        $passou = true;
+                    }
+                    if ($passou) {
+                        $lista_ordenada[] = $uid;
+                    }
+                }
+                // Adiciona o restante do início até antes do proximo_corretor_id para completar o ciclo circular
+                foreach ($corretores as $corr) {
+                    $uid = intval($corr['id_usuario']);
+                    if ($uid === $proximo_corretor_id) {
+                        break;
+                    }
+                    $lista_ordenada[] = $uid;
+                }
+                
+                $corretor_escolhido = 0;
+                foreach ($lista_ordenada as $uid_cand) {
+                    // Verifica se tem algum lead com status_lead = 'Lead' para este corretor
+                    $leads_pendentes = $db->Query("SELECT id_cliente FROM clientes WHERE id_corretor = $uid_cand AND status_lead = 'Lead' LIMIT 1");
+                    if (empty($leads_pendentes)) {
+                        // Não tem lead travado em 'Lead', pode receber!
+                        $corretor_escolhido = $uid_cand;
+                        break;
+                    }
+                }
+                
+                // Se todos os corretores tiverem leads com status 'Lead' (fallback de segurança), pega o próximo da fila original mesmo
+                if ($corretor_escolhido === 0) {
+                    $corretor_escolhido = $proximo_corretor_id;
+                }
+                
+                // 4. Inserir o lead na tabela clientes preenchendo as colunas nome, telefone1, id_empreendimento e id_corretor
+                $data_hoje = date('Y-m-d');
+                $sql_ins = "INSERT INTO clientes (nome, telefone1, id_empreendimento, id_corretor, status_lead, origem_lead, data_cadastro, data_ultima_mov) 
+                            VALUES ('$nome_lead', '$telefone1', $id_empreendimento, $corretor_escolhido, 'Lead', 'Distribuição Automática', '$data_hoje', '$data_hoje')";
+                $db->Query($sql_ins);
+                
+                // 5. Ajustar o id na tabela distribuicao_leads
+                if (empty($tabela_dist)) {
+                    $db->Query("INSERT INTO distribuicao_leads (ultimo_corretor) VALUES ($corretor_escolhido)");
+                } else {
+                    $db->Query("UPDATE distribuicao_leads SET ultimo_corretor = $corretor_escolhido");
+                }
+                
+                header("Location: index.php?msg_dist=sucesso");
+                exit;
+            }
+        }
+    }
+}
+
+// Carregar empreendimentos ativos para o combobox do modal de distribuição
+$empreendimentos_ativos_modal = $db->Query("SELECT id_empreendimento, nome_empreendimento FROM empreendimentos WHERE ativo = 1 ORDER BY nome_empreendimento ASC");
+
 // Definições de Data Baseadas no Horário Atual (Ano Vigente: 2026)
 $data_hoje   = date('Y-m-d');
 $data_ini_mes = date('Y-m-01');
@@ -92,6 +191,9 @@ if ($total_vgv_mensal >= 1000000) {
         .menu-tree.open {
             max-height: 250px;
         }
+
+        .btn-3d { transition: all 0.1s ease-in-out; box-shadow: 0 4px 0 0 rgba(0, 0, 0, 0.15); }
+        .btn-3d:active { transform: translateY(4px); box-shadow: 0 0px 0 0 rgba(0, 0, 0, 0.15); }
     </style>
     
     <!-- Favicon padrão para navegadores -->
@@ -170,6 +272,12 @@ if ($total_vgv_mensal >= 1000000) {
                                 <i class="fa-solid fa-solid fa-list text-xs text-indigo-400"></i>
                                 <span>Lista</span>
                             </a>
+                            <?php if ($_SESSION['is_master']): ?>
+                            <a href="#" onclick="abrirModalDistribuirLeads(event)" class="flex items-center gap-3 pl-14 pr-6 py-2.5 text-sm hover:text-white hover:bg-slate-800/50 transition-colors">
+                                <i class="fa-solid fa-share-nodes text-xs text-indigo-400"></i>
+                                <span>Distribuir Leads</span>
+                            </a>
+                            <?php endif; ?>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -249,6 +357,13 @@ if ($total_vgv_mensal >= 1000000) {
         </aside>
 
         <main class="flex-1 p-8 overflow-y-auto">
+            <?php if(isset($_GET['msg_dist']) && $_GET['msg_dist'] === 'sucesso'): ?>
+                <div class="mb-6 p-4 rounded-lg bg-green-500 text-white shadow-md flex items-center gap-2">
+                    <i class="fas fa-check-circle text-xl"></i>
+                    <span>Lead distribuído e cadastrado com sucesso para o próximo corretor elegível!</span>
+                </div>
+            <?php endif; ?>
+
             <div class="mb-8">
                 <h2 class="text-3xl font-extrabold text-slate-800 tracking-tight">Painel de Vendas</h2>
                 <p class="text-sm text-slate-500 mt-1">Olá, <?php echo explode(' ', $_SESSION['usuario_nome'])[0]; ?>! Veja as atividades do sistema.</p>
@@ -304,12 +419,84 @@ if ($total_vgv_mensal >= 1000000) {
         </main>
     </div>
 
+    <!-- MODAL DE DISTRIBUIR LEADS -->
+    <div id="modalDistribuirLeads" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg p-6 relative animate-in fade-in zoom-in duration-150">
+            
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">
+                        <i class="fa-solid fa-share-nodes text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-extrabold text-slate-800">Distribuir Novo Lead</h3>
+                        <p class="text-xs text-slate-500">Atribuição inteligente e rotativa entre os corretores ativos.</p>
+                    </div>
+                </div>
+                <button type="button" onclick="fecharModalDistribuirLeads()" class="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form action="index.php" method="POST" class="space-y-4">
+                <input type="hidden" name="acao_distribuir_lead" value="1">
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Nome do Lead</label>
+                    <input type="text" name="nome" required placeholder="Digite o nome completo do cliente..." class="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm text-slate-800">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Telefone Principal</label>
+                    <input type="text" id="tel_distribuicao" name="telefone" required placeholder="(00) 00000-0000" class="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm text-slate-800">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Empreendimento de Interesse</label>
+                    <select name="id_empreendimento" required class="w-full p-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm text-slate-800">
+                        <option value="">-- Selecione o Empreendimento Ativo --</option>
+                        <?php if (!empty($empreendimentos_ativos_modal)): ?>
+                            <?php foreach ($empreendimentos_ativos_modal as $emp): ?>
+                                <option value="<?php echo $emp['id_empreendimento']; ?>"><?php echo htmlspecialchars($emp['nome_empreendimento']); ?></option>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </select>
+                </div>
+
+                <div class="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                    <button type="button" onclick="fecharModalDistribuirLeads()" class="px-5 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">
+                        Cancelar
+                    </button>
+                    <button type="submit" class="btn-3d bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-6 py-2.5 rounded-xl flex items-center gap-2">
+                        <i class="fas fa-save"></i> Salvar e Distribuir
+                    </button>
+                </div>
+            </form>
+
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/imask"></script>
     <script>
         function toggleMenuTree(buttonElement) {
             const submenu = buttonElement.nextElementSibling;
             const arrow = buttonElement.querySelector('.arrow-icon');
             submenu.classList.toggle('open');
             arrow.style.transform = submenu.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+
+        function abrirModalDistribuirLeads(event) {
+            if (event) event.preventDefault();
+            document.getElementById('modalDistribuirLeads').classList.remove('hidden');
+        }
+
+        function fecharModalDistribuirLeads() {
+            document.getElementById('modalDistribuirLeads').classList.add('hidden');
+        }
+
+        // Máscara para o telefone no modal
+        if (document.getElementById('tel_distribuicao')) {
+            IMask(document.getElementById('tel_distribuicao'), { mask: [{ mask: '(00) 0000-0000' }, { mask: '(00) 00000-0000' }] });
         }
     </script>
 </body>

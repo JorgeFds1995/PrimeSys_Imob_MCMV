@@ -287,7 +287,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Status do Funil (Lead)</label>
                         <select name="status_lead" required class="w-full p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                             <?php 
-                            $status_opcoes = ['Lead', 'Atendimento', 'Aguardando Documentos', 'Análise Documento', 'Negociação', 'Perdido', 'Venda Fechada', 'Desligamento', 'Nota Anexada', 'Comissão Recebida'];
+                            $status_opcoes = ['Lead', 'Atendimento', 'Aguardando Documentos', 'Perseguição', 'Análise Documento', 'Aprovado', 'Reprovado', 'Condicionado', 'Restrição', 'BACEN', 'Rating', 'Negociação', 'Perdido', 'Venda Fechada', 'Desligamento', 'Nota Anexada', 'Comissão Recebida'];
                             foreach($status_opcoes as $op){
                                 $sel = (isset($cliente_atual['status_lead']) && $cliente_atual['status_lead'] == $op) ? 'selected' : (($op=='Lead' && !$cliente_atual)?'selected':'');
                                 echo "<option value='$op' $sel>$op</option>";
@@ -300,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <select name="origem_lead" required class="w-full p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                             <option value="">-- Selecione a Origem --</option>
                             <?php 
-                            $origem_opcoes = ['Instagram', 'Facebook', 'WhatsApp', 'Site', 'Google', 'Lista', 'Carta', 'Panfleto', 'Outdoor', 'Banner', 'Indicação'];
+                            $origem_opcoes = ['Campanha', 'Instagram', 'Marketplace', 'WhatsApp', 'Site', 'Google', 'Lista', 'Carta', 'Panfleto', 'Outdoor', 'Banner', 'Indicação'];
                             foreach($origem_opcoes as $op){
                                 $sel = (isset($cliente_atual['origem_lead']) && $cliente_atual['origem_lead'] == $op) ? 'selected' : '';
                                 echo "<option value='$op' $sel>$op</option>";

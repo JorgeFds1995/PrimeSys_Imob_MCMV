@@ -12,6 +12,8 @@ $db = new Database();
 $busca = isset($_GET['busca']) ? trim($_GET['busca']) : '';
 $busca_escapada = str_replace("'", "''", $busca);
 
+$corretor_filtro = isset($_GET['corretor']) ? intval($_GET['corretor']) : 0;
+
 $id_usuario_logado = intval($_SESSION['usuario_id']);
 
 // =========================================================================
@@ -32,8 +34,14 @@ if (!empty($usuario_db) && isset($usuario_db[0]['master_user'])) {
 $_SESSION['is_master'] = $is_master_real;
 // =========================================================================
 
+// Busca a lista de corretores (usuários onde corretor = 1 ou true) para o combobox do master
+$corretores_lista = [];
+if ($is_master_real) {
+    $corretores_lista = $db->Query("SELECT id_usuario, nome FROM usuarios WHERE corretor = 1 OR corretor = true ORDER BY nome ASC");
+}
+
 // Definição das colunas/fases oficiais do Funil Imobiliário
-$fases_funil = ['Lead', 'Atendimento', 'Aguardando Documentos', 'Análise Documento', 'Negociação', 'Perdido', 'Venda Fechada', 'Desligamento', 'Nota Anexada', 'Comissão Recebida'];
+$fases_funil = ['Lead', 'Atendimento', 'Aguardando Documentos', 'Perseguição', 'Análise Documento', 'Aprovado', 'Reprovado', 'Condicionado', 'Restrição', 'BACEN', 'Rating', 'Negociação', 'Perdido', 'Venda Fechada', 'Desligamento', 'Nota Anexada', 'Comissão Recebida'];
 
 // 1. BASE DA QUERY ATUALIZADA (Traz o cliente, o corretor e o empreendimento de interesse)
 $sql = "SELECT c.id_cliente, c.nome, c.telefone1, c.status_lead, c.origem_lead, 
@@ -46,6 +54,11 @@ $sql = "SELECT c.id_cliente, c.nome, c.telefone1, c.status_lead, c.origem_lead,
 // 2. FILTRO DE PRIVACIDADE: Corretores comuns só enxergam seus próprios leads
 if (!$is_master_real) {
     $sql .= " AND (c.id_corretor = $id_usuario_logado OR c.id_corretor = 0 OR c.status_lead = 'Perdido' )";
+} else {
+    // Se for master, verifica se aplicou o filtro por corretor específico
+    if ($corretor_filtro > 0) {
+        $sql .= " AND c.id_corretor = $corretor_filtro";
+    }
 }
 
 // 3. BARRA DE PESQUISA GLOBAL OU POR CORRETOR (Isolada com parênteses para não quebrar o AND anterior)
@@ -59,18 +72,17 @@ $todos_clientes = $db->Query($sql);
 // Organiza os clientes em arrays separados por fase do funil para montar as colunas
 $quadro_kanban = array_fill_keys($fases_funil, []);
 if (!empty($todos_clientes)) {
-    foreach ($todos_clientes as $cli) {
-        $status = $cli['status_lead'];
-        if (array_key_exists($status, $quadro_kanban)) {
-            $quadro_kanban[$status][] = $cli;
+    foreach ($todos_clientes as$cli) {
+        $status =$cli['status_lead'];
+        if (array_key_exists($status, $quadro_kanban)) {$quadro_kanban[$status][] =$cli;
         } else {
-            $quadro_kanban['Lead'][] = $cli; // Fallback de segurança
+            $quadro_kanban['Lead'][] =$cli; // Fallback de segurança
         }
     }
 }
 
 function formatCpf($v) {
-    return (strlen($v) === 11) ? substr($v,0,3).'.'.substr($v,3,3).'.'.substr($v,6,3).'-'.substr($v,9,2) : $v;
+    return (strlen($v) === 11) ? substr($v,0,3).'.'.substr($v,3,3).'.'.substr($v,6,3).'-'.substr($v,9,2) :$v;
 }
 function formatFone($v) {
     return (strlen($v) === 11) ? "(".substr($v,0,2).") ".substr($v,2,5)."-".substr($v,7,4) : ((strlen($v)===10)?"(".substr($v,0,2).") ".substr($v,2,4)."-".substr($v,6,4):$v);
@@ -131,15 +143,31 @@ function formatFone($v) {
         
            <!-- Primeira DIV (Formulário) -->
            <div class="bg-white p-4 rounded-2xl shadow-md border border-slate-200 select-none max-w-xl flex-1">
-              <form action="" method="GET" class="flex gap-3">
+              <form action="" method="GET" class="flex gap-3 items-center">
                     <div class="relative flex-1">
                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
                           <i class="fas fa-search"></i>
                        </span>
                        <input type="text" name="busca" value="<?php echo htmlspecialchars($busca); ?>" placeholder="Buscar lead por nome ou CPF..." class="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-800 text-sm">
                     </div>
+
+                    <?php if ($is_master_real): ?>
+                    <div class="relative">
+                       <select name="corretor" onchange="this.form.submit()" class="py-2.5 pl-3 pr-8 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-800 text-sm bg-white">
+                          <option value="0">Todos os Corretores</option>
+                          <?php if (!empty($corretores_lista)): ?>
+                              <?php foreach ($corretores_lista as$corr): ?>
+                                  <option value="<?php echo $corr['id_usuario']; ?>" <?php echo ($corretor_filtro ==$corr['id_usuario']) ? 'selected' : ''; ?>>
+                                      <?php echo htmlspecialchars($corr['nome']); ?>
+                                  </option>
+                              <?php endforeach; ?>
+                          <?php endif; ?>
+                       </select>
+                    </div>
+                    <?php endif; ?>
+
                     <button type="submit" class="btn-3d bg-slate-700 hover:bg-slate-800 text-white font-bold px-5 py-2.5 rounded-xl text-sm">Filtrar</button>
-                    <?php if (!empty($busca)): ?>
+                    <?php if (!empty($busca) || $corretor_filtro > 0): ?>
                        <a href="clientes_lista.php" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-4 py-2.5 rounded-xl text-sm flex items-center justify-center">Limpar</a>
                     <?php endif; ?>
               </form>
@@ -176,14 +204,14 @@ function formatFone($v) {
         <div class="flex-1 overflow-x-auto kanban-container pb-4">
             <div class="flex gap-4 items-start pr-4 h-full" style="width: max-content;">
                 
-                <?php foreach ($fases_funil as $fase): 
+                <?php foreach ($fases_funil as$fase): 
                     // Definição dinâmica de cores para os cabeçalhos das colunas
                     $corTopo = "border-t-indigo-500";
-                    if($fase == 'Lead') $corTopo = "border-t-blue-500";
+                    if($fase == 'Lead')$corTopo = "border-t-blue-500";
                     if($fase == 'Visita' || $fase == 'Negociação') $corTopo = "border-t-amber-500";
                     if($fase == 'Análise Documento') $corTopo = "border-t-purple-500";
                     if($fase == 'Venda Fechada' || $fase == 'Comissão Recebida') $corTopo = "border-t-emerald-500";
-                    if($fase == 'Perdido' || $fase == 'Desligamento') $corTopo = "border-t-red-500";
+                    if($fase == 'Perdido' || $fase == 'Desligamento')$corTopo = "border-t-red-500";
                 ?>
                     <!-- Coluna de Fase -->
                     <div class="bg-slate-200/70 w-72 rounded-2xl p-4 flex flex-col max-h-[calc(100vh-230px)] border-t-4 <?php echo $corTopo; ?> shadow-sm border border-x-slate-300/60 border-b-slate-300/60">
@@ -199,7 +227,7 @@ function formatFone($v) {
                         <!-- Lista de Cards (Área Draggável) -->
                         <div class="kanban-dropzone flex-1 overflow-y-auto space-y-3 pr-1" data-status="<?php echo htmlspecialchars($fase); ?>">
                             <?php if (!empty($quadro_kanban[$fase])): ?>
-                                <?php foreach ($quadro_kanban[$fase] as $cli): ?>
+                                <?php foreach ($quadro_kanban[$fase] as$cli): ?>
                                     
                                     <!-- Card do Lead Atualizado com as Novas Informações -->
                                     <div class="bg-white p-4 rounded-xl shadow border border-slate-200 cursor-grab active:cursor-grabbing hover:border-indigo-400 transition-all card-3d relative" data-id="<?php echo $cli['id_cliente']; ?>">

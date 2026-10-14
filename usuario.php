@@ -87,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $db->Query($sql);
-        header("Location: usuario.php?id=$id_edicao&msg=sucesso");
+        header("Location: usuarios_lista.php");
         exit;
     } else {
         // --- MODO CADASTRO ---
@@ -105,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 VALUES ('$login', '$senha_hash', '$nome', '$telefone', '$endereco', '$email' $valor_foto, $banco_cod, '$banco_desc', '$conta', '$agencia', '$tipo_pix', '$chave_pix',$corretor, $financeiro, $master_user, $percentual_comissao)";
         
         $db->Query($sql);
-        header("Location: usuario.php?msg=cadastrado");
+        header("Location: usuarios_lista.php");
         exit;
     }
 }
