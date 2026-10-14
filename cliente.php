@@ -16,6 +16,7 @@ $lista_profissoes = $db->Query("SELECT profissao FROM profissoes ORDER BY profis
 // Inicialização de variáveis para edição
 $id_cliente = isset($_GET['id']) ? intval($_GET['id']) : null;
 $cliente_atual = null;
+$erro_duplicidade = '';
 
 if ($id_cliente) {
     $sql = "SELECT * FROM clientes WHERE id_cliente = $id_cliente LIMIT 1";
@@ -64,95 +65,135 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $telefone1 = preg_replace('/\D/', '', $_POST['telefone1']);
     $telefone2 = preg_replace('/\D/', '', $_POST['telefone2']);
 
-    // Tratamento de Datas (Converte para o formato MySQL YYYY-MM-DD ou salva NULL)
-    $data_nasc = !empty($_POST['data_nasc']) ? "'".$_POST['data_nasc']."'" : 'NULL';
-    $data_venda = !empty($_POST['data_venda']) ? "'".$_POST['data_venda']."'" : 'NULL';
-    $data_desligamento = !empty($_POST['data_desligamento']) ? "'".$_POST['data_desligamento']."'" : 'NULL';
-    $data_encerramento = !empty($_POST['data_encerramento']) ? "'".$_POST['data_encerramento']."'" : 'NULL';
-    
-    // Datas automáticas de controle
-    $data_hoje = date('Y-m-d');
-    $data_ultima_mov = "'$data_hoje'";
-
-    // Tratamento de Campos Numéricos/Decimais
-    $fun_num = function($val) { return !empty($val) ? str_replace(['.', ','], ['', '.'], $val) : 0.00; };
-    $renda = $fun_num($_POST['renda']); $renda2 = $fun_num($_POST['renda2']); $renda3 = $fun_num($_POST['renda3']);
-    $valor_imovel = $fun_num($_POST['valor_imovel']); $valor_venda = $fun_num($_POST['valor_venda']);
-    $desconto_construtora = $fun_num($_POST['desconto_construtora']); $desconto_federal = $fun_num($_POST['desconto_federal']);
-    $desconto_estadual = $fun_num($_POST['desconto_estadual']); $fgts = $fun_num($_POST['fgts']);
-    $outros_descontos = $fun_num($_POST['outros_descontos']); $valor_entrada = $fun_num($_POST['valor_entrada']);
-    $valor_financiar = $fun_num($_POST['valor_financiar']); $valor_parcela = $fun_num($_POST['valor_parcela']);
-    $vgv = $fun_num($_POST['vgv']); $vlr_parcela_entrada = $fun_num($_POST['vlr_parcela_entrada']);
-
-    // Inteiros Simples
-    $parcelas_entrada = !empty($_POST['parcelas_entrada']) ? intval($_POST['parcelas_entrada']) : 0;
-    $qtd_parcelas = !empty($_POST['qtd_parcelas']) ? intval($_POST['qtd_parcelas']) : 0;
-
-    // Booleans Checkboxes
-    $ok_documentos = isset($_POST['ok_documentos']) ? 1 : 0;
-    $ok_fiador = isset($_POST['ok_fiador']) ? 1 : 0;
-    $ok_confissao_divida = isset($_POST['ok_confissao_divida']) ? 1 : 0;
-
     $id_edicao = !empty($_POST['id_cliente']) ? intval($_POST['id_cliente']) : null;
 
-    if ($id_edicao) {
-        // --- MODO EDIÇÃO ---
-        $sql = "UPDATE clientes SET 
-                    nome='$nome', rg='$rg', cpf='$cpf', endereco='$endereco', telefone1='$telefone1', telefone2='$telefone2', 
-                    email='$email', data_nasc=$data_nasc, nacionalidade='$nacionalidade', profissao='$profissao', renda=$renda, 
-                    empresa='$empresa', proponente2='$proponente2', cpf2='$cpf2', renda2=$renda2, proponente3='$proponente3', 
-                    cpf3='$cpf3', renda3=$renda3, id_corretor=$id_corretor, status_lead='$status_lead', origem_lead='$origem_lead', 
-                    observacao='$observacao', id_empreendimento=$id_empreendimento, valor_imovel=$valor_imovel, valor_venda=$valor_venda, 
-                    desconto_construtora=$desconto_construtora, desconto_federal=$desconto_federal, desconto_estadual=$desconto_estadual, 
-                    fgts=$fgts, outros_descontos=$outros_descontos, valor_entrada=$valor_entrada, valor_financiar=$valor_financiar, 
-                    valor_parcela=$valor_parcela, vgv=$vgv, entrada_parcelada='$entrada_parcelada', vlr_parcela_entrada=$vlr_parcela_entrada, 
-                    parcelas_entrada=$parcelas_entrada, qtd_parcelas=$qtd_parcelas, data_venda=$data_venda, data_desligamento=$data_desligamento, 
-                    data_encerramento=$data_encerramento, data_ultima_mov=$data_ultima_mov, ok_documentos=$ok_documentos, ok_fiador=$ok_fiador, 
-                    ok_confissao_divida=$ok_confissao_divida 
-                WHERE id_cliente = $id_edicao";
-        $db->Query($sql);
+    // VALIDAÇÃO DE DUPLICIDADE (CPF ou Telefone1)
+    $condicao_edicao = $id_edicao ? " AND id_cliente != $id_edicao" : "";
+    
+    // Verifica apenas se os campos informados não estiverem vazios
+    $sql_valida = "SELECT c.*, u.nome as nome_corretor_existente 
+                   FROM clientes c 
+                   LEFT JOIN usuarios u ON c.id_corretor = u.id_usuario 
+                   WHERE (1=0";
+    
+    if (!empty($cpf)) {
+        $sql_valida .= " OR c.cpf = '$cpf'";
+    }
+    if (!empty($telefone1)) {
+        $sql_valida .= " OR c.telefone1 = '$telefone1'";
+    }
+    $sql_valida .= ") $condicao_edicao LIMIT 1";
+
+    $duplicado = $db->Query($sql_valida);
+
+    if (!empty($duplicado)) {
+        $nome_corretor_resp = !empty($duplicado[0]['nome_corretor_existente']) ? $duplicado[0]['nome_corretor_existente'] : 'outro corretor';
+        $erro_duplicidade = "O lead já existe com outro corretor (" . $nome_corretor_resp . ").";
+    } else {
+
+        // Tratamento de Datas (Converte para o formato MySQL YYYY-MM-DD ou salva NULL)
+        $data_nasc = !empty($_POST['data_nasc']) ? "'".$_POST['data_nasc']."'" : 'NULL';
+        $data_venda = !empty($_POST['data_venda']) ? "'".$_POST['data_venda']."'" : 'NULL';
+        $data_desligamento = !empty($_POST['data_desligamento']) ? "'".$_POST['data_desligamento']."'" : 'NULL';
+        $data_encerramento = !empty($_POST['data_encerramento']) ? "'".$_POST['data_encerramento']."'" : 'NULL';
         
-        // --- GATILHO DE COMISSÃO AUTOMÁTICA (Adicionar no processamento do POST de cliente.php) ---
-        if ($status_lead === 'Nota Anexada') {
-            // 1. Verifica se já não existe uma comissão gerada para este cliente para evitar duplicidade
-            $id_cliente_verificar = $id_edicao ? $id_edicao : $db->Query("SELECT LAST_INSERT_ID() as id")[0]['id'];
-            $check_comissao = $db->Query("SELECT id_comissao FROM comissao_imob WHERE id_cliente = $id_cliente_verificar LIMIT 1");
+        // Datas automáticas de controle
+        $data_hoje = date('Y-m-d');
+        $data_ultima_mov = "'$data_hoje'";
+
+        // Tratamento de Campos Numéricos/Decimais
+        $fun_num = function($val) { return !empty($val) ? str_replace(['.', ','], ['', '.'], $val) : 0.00; };
+        $renda = $fun_num($_POST['renda']); $renda2 = $fun_num($_POST['renda2']); $renda3 = $fun_num($_POST['renda3']);
+        $valor_imovel = $fun_num($_POST['valor_imovel']); $valor_venda = $fun_num($_POST['valor_venda']);
+        $desconto_construtora = $fun_num($_POST['desconto_construtora']); $desconto_federal = $fun_num($_POST['desconto_federal']);
+        $desconto_estadual = $fun_num($_POST['desconto_estadual']); $fgts = $fun_num($_POST['fgts']);
+        $outros_descontos = $fun_num($_POST['outros_descontos']); $valor_entrada = $fun_num($_POST['valor_entrada']);
+        $valor_financiar = $fun_num($_POST['valor_financiar']); $valor_parcela = $fun_num($_POST['valor_parcela']);
+        $vgv = $fun_num($_POST['vgv']); $vlr_parcela_entrada = $fun_num($_POST['vlr_parcela_entrada']);
+
+        // Inteiros Simples
+        $parcelas_entrada = !empty($_POST['parcelas_entrada']) ? intval($_POST['parcelas_entrada']) : 0;
+        $qtd_parcelas = !empty($_POST['qtd_parcelas']) ? intval($_POST['qtd_parcelas']) : 0;
+
+        // Booleans Checkboxes
+        $ok_documentos = isset($_POST['ok_documentos']) ? 1 : 0;
+        $ok_fiador = isset($_POST['ok_fiador']) ? 1 : 0;
+        $ok_confissao_divida = isset($_POST['ok_confissao_divida']) ? 1 : 0;
+
+        if ($id_edicao) {
+            // --- MODO EDIÇÃO ---
+            $sql = "UPDATE clientes SET 
+                        nome='$nome', rg='$rg', cpf='$cpf', endereco='$endereco', telefone1='$telefone1', telefone2='$telefone2', 
+                        email='$email', data_nasc=$data_nasc, nacionalidade='$nacionalidade', profissao='$profissao', renda=$renda, 
+                        empresa='$empresa', proponente2='$proponente2', cpf2='$cpf2', renda2=$renda2, proponente3='$proponente3', 
+                        cpf3='$cpf3', renda3=$renda3, id_corretor=$id_corretor, status_lead='$status_lead', origem_lead='$origem_lead', 
+                        observacao='$observacao', id_empreendimento=$id_empreendimento, valor_imovel=$valor_imovel, valor_venda=$valor_venda, 
+                        desconto_construtora=$desconto_construtora, desconto_federal=$desconto_federal, desconto_estadual=$desconto_estadual, 
+                        fgts=$fgts, outros_descontos=$outros_descontos, valor_entrada=$valor_entrada, valor_financiar=$valor_financiar, 
+                        valor_parcela=$valor_parcela, vgv=$vgv, entrada_parcelada='$entrada_parcelada', vlr_parcela_entrada=$vlr_parcela_entrada, 
+                        parcelas_entrada=$parcelas_entrada, qtd_parcelas=$qtd_parcelas, data_venda=$data_venda, data_desligamento=$data_desligamento, 
+                        data_encerramento=$data_encerramento, data_ultima_mov=$data_ultima_mov, ok_documentos=$ok_documentos, ok_fiador=$ok_fiador, 
+                        ok_confissao_divida=$ok_confissao_divida 
+                    WHERE id_cliente = $id_edicao";
+            $db->Query($sql);
             
-            if (empty($check_comissao) && !empty($id_empreendimento) && !empty($id_corretor)) {
-                // 2. Busca o percentual de comissão e a construtora do Empreendimento
-                $dados_emp = $db->Query("SELECT id_incorporadora, percentual_comissao FROM empreendimentos WHERE id_empreendimento = $id_empreendimento LIMIT 1");
+            // --- GATILHO DE COMISSÃO AUTOMÁTICA (Adicionar no processamento do POST de cliente.php) ---
+            if ($status_lead === 'Nota Anexada') {
+                // 1. Verifica se já não existe uma comissão gerada para este cliente para evitar duplicidade
+                $id_cliente_verificar = $id_edicao ? $id_edicao : $db->Query("SELECT LAST_INSERT_ID() as id")[0]['id'];
+                $check_comissao = $db->Query("SELECT id_comissao FROM comissao_imob WHERE id_cliente = $id_cliente_verificar LIMIT 1");
                 
-                // 3. Busca o percentual de comissão do Corretor (tabela usuarios)
-                $dados_corr = $db->Query("SELECT percentual_comissao FROM usuarios WHERE id_usuario = $id_corretor LIMIT 1");
-                
-                if (!empty($dados_emp) && !empty($dados_corr)) {
-                    $id_construtora = intval($dados_emp[0]['id_incorporadora']);
-                    $pct_imob = floatval($dados_emp[0]['percentual_comissao']);
-                    $pct_corretor = floatval($dados_corr[0]['percentual_comissao']);
+                if (empty($check_comissao) && !empty($id_empreendimento) && !empty($id_corretor)) {
+                    // 2. Busca o percentual de comissão e a construtora do Empreendimento
+                    $dados_emp = $db->Query("SELECT id_incorporadora, percentual_comissao FROM empreendimentos WHERE id_empreendimento = $id_empreendimento LIMIT 1");
                     
-                    // 4. Cálculos Matemáticos Requeridos
-                    $valor_geral_venda = $valor_venda; // Pega o valor fechado da venda digitado no cliente
-                    $valor_comissao_imob = ($valor_geral_venda * $pct_imob) / 100;
-                    $valor_comissao_corretor = ($valor_comissao_imob * $pct_corretor) / 100;
+                    // 3. Busca o percentual de comissão do Corretor (tabela usuarios)
+                    $dados_corr = $db->Query("SELECT percentual_comissao FROM usuarios WHERE id_usuario = $id_corretor LIMIT 1");
                     
-                    $data_hoje = date('Y-m-d');
-                    
-                    // 5. Inserção na tabela comissao_imob
-                    $sql_comissao = "INSERT INTO comissao_imob (
-                                        id_empreendimento, id_construtora, id_cliente, id_corretor, 
-                                        data_emissao, data_vencimento, valor_geral_venda, 
-                                        valor_comissao_imob, valor_comissao_corretor
-                                    ) VALUES (
-                                        $id_empreendimento, $id_construtora, $id_cliente_verificar, $id_corretor, 
-                                        '$data_hoje', '$data_hoje', $valor_geral_venda, 
-                                        $valor_comissao_imob, $valor_comissao_corretor
-                                    )";
-                    $db->Query($sql_comissao);
+                    if (!empty($dados_emp) && !empty($dados_corr)) {
+                        $id_construtora = intval($dados_emp[0]['id_incorporadora']);
+                        $pct_imob = floatval($dados_emp[0]['percentual_comissao']);
+                        $pct_corretor = floatval($dados_corr[0]['percentual_comissao']);
+                        
+                        // 4. Cálculos Matemáticos Requeridos
+                        $valor_geral_venda = $valor_venda; // Pega o valor fechado da venda digitado no cliente
+                        $valor_comissao_imob = ($valor_geral_venda * $pct_imob) / 100;
+                        $valor_comissao_corretor = ($valor_comissao_imob * $pct_corretor) / 100;
+                        
+                        $data_hoje = date('Y-m-d');
+                        
+                        // 5. Inserção na tabela comissao_imob
+                        $sql_comissao = "INSERT INTO comissao_imob (
+                                            id_empreendimento, id_construtora, id_cliente, id_corretor, 
+                                            data_emissao, data_vencimento, valor_geral_venda, 
+                                            valor_comissao_imob, valor_comissao_corretor
+                                        ) VALUES (
+                                            $id_empreendimento, $id_construtora, $id_cliente_verificar, $id_corretor, 
+                                            '$data_hoje', '$data_hoje', $valor_geral_venda, 
+                                            $valor_comissao_imob, $valor_comissao_corretor
+                                        )";
+                        $db->Query($sql_comissao);
+                    }
                 }
+                
+                // --- AUTOMAÇÃO DA DATA DE VENDA ATUAL (Adicionar no tratamento do POST em cliente.php) ---
+
+                // Se o status du lead for alterado para 'Venda Fechada', força a data da venda a ser hoje
+                if ($status_lead === 'Venda Fechada') {
+                   $data_venda = "'" . date('Y-m-d') . "'";
+                } else {
+                   // Caso contrário, respeita o que foi preenchido ou mantém NULL se estiver vazio
+                   $data_venda = !empty($_POST['data_venda']) ? "'" . $_POST['data_venda'] . "'" : 'NULL';
+                }
+
+
             }
             
-            // --- AUTOMAÇÃO DA DATA DE VENDA ATUAL (Adicionar no tratamento do POST em cliente.php) ---
-
+            header("Location: cliente.php?id=$id_edicao&msg=sucesso");
+            exit;
+        } else {
+            // --- MODO CADASTRO ---
+            
             // Se o status do lead for alterado para 'Venda Fechada', força a data da venda a ser hoje
             if ($status_lead === 'Venda Fechada') {
                $data_venda = "'" . date('Y-m-d') . "'";
@@ -160,69 +201,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                // Caso contrário, respeita o que foi preenchido ou mantém NULL se estiver vazio
                $data_venda = !empty($_POST['data_venda']) ? "'" . $_POST['data_venda'] . "'" : 'NULL';
             }
-
-
-        }
-        
-        header("Location: cliente.php?id=$id_edicao&msg=sucesso");
-        exit;
-    } else {
-        // --- MODO CADASTRO ---
-        
-        // Se o status do lead for alterado para 'Venda Fechada', força a data da venda a ser hoje
-        if ($status_lead === 'Venda Fechada') {
-           $data_venda = "'" . date('Y-m-d') . "'";
-        } else {
-           // Caso contrário, respeita o que foi preenchido ou mantém NULL se estiver vazio
-           $data_venda = !empty($_POST['data_venda']) ? "'" . $_POST['data_venda'] . "'" : 'NULL';
-        }
-        
-        $sql = "INSERT INTO clientes (nome, rg, cpf, endereco, telefone1, telefone2, email, data_nasc, nacionalidade, profissao, renda, empresa, proponente2, cpf2, renda2, proponente3, cpf3, renda3, id_corretor, status_lead, origem_lead, observacao, id_empreendimento, valor_imovel, valor_venda, desconto_construtora, desconto_federal, desconto_estadual, fgts, outros_descontos, valor_entrada, valor_financiar, valor_parcela, vgv, entrada_parcelada, vlr_parcela_entrada, parcelas_entrada, qtd_parcelas, data_venda, data_cadastro, data_ultima_mov, ok_documentos, ok_fiador, ok_confissao_divida) 
-                VALUES ('$nome', '$rg', '$cpf', '$endereco', '$telefone1', '$telefone2', '$email', $data_nasc, '$nacionalidade', '$profissao', $renda, '$empresa', '$proponente2', '$cpf2', $renda2, '$proponente3', '$cpf3', $renda3, $id_corretor, '$status_lead', '$origem_lead', '$observacao', $id_empreendimento, $valor_imovel, $valor_venda, $desconto_construtora, $desconto_federal, $desconto_estadual, $fgts, $outros_descontos, $valor_entrada, $valor_financiar, $valor_parcela, $vgv, '$entrada_parcelada', $vlr_parcela_entrada, $parcelas_entrada, $qtd_parcelas, $data_venda, '$data_hoje', $data_ultima_mov, $ok_documentos, $ok_fiador, $ok_confissao_divida)";
-        $db->Query($sql);
-        
-        // --- GATILHO DE COMISSÃO AUTOMÁTICA (Adicionar no processamento do POST de cliente.php) ---
-        if ($status_lead === 'Nota Anexada') {
-            // 1. Verifica se já não existe uma comissão gerada para este cliente para evitar duplicidade
-            $id_cliente_verificar = $id_edicao ? $id_edicao : $db->Query("SELECT LAST_INSERT_ID() as id")[0]['id'];
-            $check_comissao = $db->Query("SELECT id_comissao FROM comissao_imob WHERE id_cliente = $id_cliente_verificar LIMIT 1");
             
-            if (empty($check_comissao) && !empty($id_empreendimento) && !empty($id_corretor)) {
-                // 2. Busca o percentual de comissão e a construtora do Empreendimento
-                $dados_emp = $db->Query("SELECT id_incorporadora, percentual_comissao FROM empreendimentos WHERE id_empreendimento = $id_empreendimento LIMIT 1");
+            $sql = "INSERT INTO clientes (nome, rg, cpf, endereco, telefone1, telefone2, email, data_nasc, nacionalidade, profissao, renda, empresa, proponente2, cpf2, renda2, proponente3, cpf3, renda3, id_corretor, status_lead, origem_lead, observacao, id_empreendimento, valor_imovel, valor_venda, desconto_construtora, desconto_federal, desconto_estadual, fgts, outros_descontos, valor_entrada, valor_financiar, valor_parcela, vgv, entrada_parcelada, vlr_parcela_entrada, parcelas_entrada, qtd_parcelas, data_venda, data_cadastro, data_ultima_mov, ok_documentos, ok_fiador, ok_confissao_divida) 
+                    VALUES ('$nome', '$rg', '$cpf', '$endereco', '$telefone1', '$telefone2', '$email', $data_nasc, '$nacionalidade', '$profissao', $renda, '$empresa', '$proponente2', '$cpf2', $renda2, '$proponente3', '$cpf3', $renda3, $id_corretor, '$status_lead', '$origem_lead', '$observacao', $id_empreendimento, $valor_imovel, $valor_venda, $desconto_construtora, $desconto_federal, $desconto_estadual, $fgts, $outros_descontos, $valor_entrada, $valor_financiar, $valor_parcela, $vgv, '$entrada_parcelada', $vlr_parcela_entrada, $parcelas_entrada, $qtd_parcelas, $data_venda, '$data_hoje', $data_ultima_mov, $ok_documentos, $ok_fiador, $ok_confissao_divida)";
+            $db->Query($sql);
+            
+            // --- GATILHO DE COMISSÃO AUTOMÁTICA (Adicionar no processamento do POST de cliente.php) ---
+            if ($status_lead === 'Nota Anexada') {
+                // 1. Verifica se já não existe uma comissão gerada para este cliente para evitar duplicidade
+                $id_cliente_verificar = $id_edicao ? $id_edicao : $db->Query("SELECT LAST_INSERT_ID() as id")[0]['id'];
+                $check_comissao = $db->Query("SELECT id_comissao FROM comissao_imob WHERE id_cliente = $id_cliente_verificar LIMIT 1");
                 
-                // 3. Busca o percentual de comissão do Corretor (tabela usuarios)
-                $dados_corr = $db->Query("SELECT percentual_comissao FROM usuarios WHERE id_usuario = $id_corretor LIMIT 1");
-                
-                if (!empty($dados_emp) && !empty($dados_corr)) {
-                    $id_construtora = intval($dados_emp[0]['id_incorporadora']);
-                    $pct_imob = floatval($dados_emp[0]['percentual_comissao']);
-                    $pct_corretor = floatval($dados_corr[0]['percentual_comissao']);
+                if (empty($check_comissao) && !empty($id_empreendimento) && !empty($id_corretor)) {
+                    // 2. Busca o percentual de comissão e a construtora do Empreendimento
+                    $dados_emp = $db->Query("SELECT id_incorporadora, percentual_comissao FROM empreendimentos WHERE id_empreendimento = $id_empreendimento LIMIT 1");
                     
-                    // 4. Cálculos Matemáticos Requeridos
-                    $valor_geral_venda = $valor_venda; // Pega o valor fechado da venda digitado no cliente
-                    $valor_comissao_imob = ($valor_geral_venda * $pct_imob) / 100;
-                    $valor_comissao_corretor = ($valor_comissao_imob * $pct_corretor) / 100;
+                    // 3. Busca o percentual de comissão do Corretor (tabela usuarios)
+                    $dados_corr = $db->Query("SELECT percentual_comissao FROM usuarios WHERE id_usuario = $id_corretor LIMIT 1");
                     
-                    $data_hoje = date('Y-m-d');
-                    
-                    // 5. Inserção na tabela comissao_imob
-                    $sql_comissao = "INSERT INTO comissao_imob (
-                                        id_empreendimento, id_construtora, id_cliente, id_corretor, 
-                                        data_emissao, data_vencimento, valor_geral_venda, 
-                                        valor_comissao_imob, valor_comissao_corretor
-                                    ) VALUES (
-                                        $id_empreendimento, $id_construtora, $id_cliente_verificar, $id_corretor, 
-                                        '$data_hoje', '$data_hoje', $valor_geral_venda, 
-                                        $valor_comissao_imob, $valor_comissao_corretor
-                                    )";
-                    $db->Query($sql_comissao);
+                    if (!empty($dados_emp) && !empty($dados_corr)) {
+                        $id_construtora = intval($dados_emp[0]['id_incorporadora']);
+                        $pct_imob = floatval($dados_emp[0]['percentual_comissao']);
+                        $pct_corretor = floatval($dados_corr[0]['percentual_comissao']);
+                        
+                        // 4. Cálculos Matemáticos Requeridos
+                        $valor_geral_venda = $valor_venda; // Pega o valor fechado da venda digitado no cliente
+                        $valor_comissao_imob = ($valor_geral_venda * $pct_imob) / 100;
+                        $valor_comissao_corretor = ($valor_comissao_imob * $pct_corretor) / 100;
+                        
+                        $data_hoje = date('Y-m-d');
+                        
+                        // 5. Inserção na tabela comissao_imob
+                        $sql_comissao = "INSERT INTO comissao_imob (
+                                            id_empreendimento, id_construtora, id_cliente, id_corretor, 
+                                            data_emissao, data_vencimento, valor_geral_venda, 
+                                            valor_comissao_imob, valor_comissao_corretor
+                                        ) VALUES (
+                                            $id_empreendimento, $id_construtora, $id_cliente_verificar, $id_corretor, 
+                                            '$data_hoje', '$data_hoje', $valor_geral_venda, 
+                                            $valor_comissao_imob, $valor_comissao_corretor
+                                        )";
+                        $db->Query($sql_comissao);
+                    }
                 }
             }
+            
+            header("Location: clientes_lista.php?msg=cadastrado");
+            exit;
         }
-        
-        header("Location: clientes_lista.php?msg=cadastrado");
-        exit;
     }
 }
 ?>
@@ -255,6 +281,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <div class="max-w-6xl mx-auto py-10 px-4">
         
+        <?php if(!empty($erro_duplicidade)): ?>
+            <div class="mb-6 p-4 rounded-lg bg-red-500 text-white shadow-md flex items-center gap-2">
+                <i class="fas fa-exclamation-triangle text-xl"></i>
+                <span><?php echo htmlspecialchars($erro_duplicidade); ?></span>
+            </div>
+        <?php endif; ?>
+
         <?php if(isset($_GET['msg'])): ?>
             <div class="mb-6 p-4 rounded-lg bg-green-500 text-white shadow-md flex items-center gap-2">
                 <i class="fas fa-check-circle text-xl"></i>

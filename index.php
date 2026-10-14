@@ -23,95 +23,107 @@ $is_master         = (bool)$_SESSION['is_master'];
 
 // Processamento do formulário de Distribuição de Leads (Modal)
 $msg_distribuicao = '';
+$erro_distribuicao = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao_distribuir_lead'])) {
     if ($is_master) {
         $nome_lead = str_replace("'", "''", trim($_POST['nome'] ?? ''));
         $telefone1 = preg_replace('/\D/', '', $_POST['telefone'] ?? '');
         $id_empreendimento = !empty($_POST['id_empreendimento']) ? intval($_POST['id_empreendimento']) : 0;
         
-        if (!empty($nome_lead) && $id_empreendimento > 0) {
-            // 1. Organizar os corretores (tabela usuarios em que a coluna corretor estiver como true por id_usuario)
-            $corretores = $db->Query("SELECT id_usuario FROM usuarios WHERE corretor = 1 OR corretor = true ORDER BY id_usuario ASC");
+        if (!empty($nome_lead) && !empty($telefone1) && $id_empreendimento > 0) {
+            // VALIDAÇÃO: Verifica se já existe um lead na tabela clientes com o mesmo telefone1
+            $check_tel = $db->Query("SELECT c.id_cliente, u.nome as nome_corretor_existente 
+                                     FROM clientes c 
+                                     LEFT JOIN usuarios u ON c.id_corretor = u.id_usuario 
+                                     WHERE c.telefone1 = '$telefone1' LIMIT 1");
             
-            if (!empty($corretores)) {
-                // 2. Verificar na tabela distribuicao_leads na coluna ultimo_corretor qual o último id que recebeu lead
-                $tabela_dist = $db->Query("SELECT ultimo_corretor FROM distribuicao_leads LIMIT 1");
-                $ultimo_id = !empty($tabela_dist) ? intval($tabela_dist[0]['ultimo_corretor']) : 0;
+            if (!empty($check_tel)) {
+                $nome_corretor_resp = !empty($check_tel[0]['nome_corretor_existente']) ? $check_tel[0]['nome_corretor_existente'] : 'outro corretor';
+                $erro_distribuicao = "Este lead já está cadastrado e sob responsabilidade de " . $nome_corretor_resp . ".";
+            } else {
+                // 1. Organizar os corretores (tabela usuarios em que a coluna corretor estiver como true por id_usuario)
+                $corretores = $db->Query("SELECT id_usuario FROM usuarios WHERE corretor = 1 OR corretor = true ORDER BY id_usuario ASC");
                 
-                // Encontrar o índice do próximo corretor a partir do último
-                $proximo_corretor_id = 0;
-                $encontrou_indice = false;
-                
-                // Primeira tentativa: encontrar o próximo após o último_id
-                foreach ($corretores as $corr) {
-                    if ($encontrou_indice) {
-                        $proximo_corretor_id = intval($corr['id_usuario']);
-                        break;
+                if (!empty($corretores)) {
+                    // 2. Verificar na tabela distribuicao_leads na coluna ultimo_corretor qual o último id que recebeu lead
+                    $tabela_dist = $db->Query("SELECT ultimo_corretor FROM distribuicao_leads LIMIT 1");
+                    $ultimo_id = !empty($tabela_dist) ? intval($tabela_dist[0]['ultimo_corretor']) : 0;
+                    
+                    // Encontrar o índice do próximo corretor a partir do último
+                    $proximo_corretor_id = 0;
+                    $encontrou_indice = false;
+                    
+                    // Primeira tentativa: encontrar o próximo após o último_id
+                    foreach ($corretores as $corr) {
+                        if ($encontrou_indice) {
+                            $proximo_corretor_id = intval($corr['id_usuario']);
+                            break;
+                        }
+                        if (intval($corr['id_usuario']) === $ultimo_id) {
+                            $encontrou_indice = true;
+                        }
                     }
-                    if (intval($corr['id_usuario']) === $ultimo_id) {
-                        $encontrou_indice = true;
+                    
+                    // Se chegou ao fim da lista ou não encontrou, pega o primeiro da lista (volta ao ciclo)
+                    if ($proximo_corretor_id === 0 && !empty($corretores)) {
+                        $proximo_corretor_id = intval($corretores[0]['id_usuario']);
                     }
-                }
-                
-                // Se chegou ao fim da lista ou não encontrou, pega o primeiro da lista (volta ao ciclo)
-                if ($proximo_corretor_id === 0 && !empty($corretores)) {
-                    $proximo_corretor_id = intval($corretores[0]['id_usuario']);
-                }
-                
-                // 3. Validação: se o corretor que era pra receber o lead, tem algum lead pertencente a ele na tabela clientes com a coluna status_lead igual a 'Lead', pula ele e vai pro próximo.
-                $candidatos = [];
-                // Reordena a lista de corretores começando a partir do $proximo_corretor_id
-                $lista_ordenada = [];
-                $passou = false;
-                foreach ($corretores as $corr) {
-                    $uid = intval($corr['id_usuario']);
-                    if ($uid === $proximo_corretor_id) {
-                        $passou = true;
+                    
+                    // 3. Validação: se o corretor que era pra receber o lead, tem algum lead pertencente a ele na tabela clientes com a coluna status_lead igual a 'Lead', pula ele e vai pro próximo.
+                    $candidatos = [];
+                    // Reordena a lista de corretores começando a partir do $proximo_corretor_id
+                    $lista_ordenada = [];
+                    $passou = false;
+                    foreach ($corretores as $corr) {
+                        $uid = intval($corr['id_usuario']);
+                        if ($uid === $proximo_corretor_id) {
+                            $passou = true;
+                        }
+                        if ($passou) {
+                            $lista_ordenada[] = $uid;
+                        }
                     }
-                    if ($passou) {
+                    // Adiciona o restante do início até antes do proximo_corretor_id para completar o ciclo circular
+                    foreach ($corretores as $corr) {
+                        $uid = intval($corr['id_usuario']);
+                        if ($uid === $proximo_corretor_id) {
+                            break;
+                        }
                         $lista_ordenada[] = $uid;
                     }
-                }
-                // Adiciona o restante do início até antes do proximo_corretor_id para completar o ciclo circular
-                foreach ($corretores as $corr) {
-                    $uid = intval($corr['id_usuario']);
-                    if ($uid === $proximo_corretor_id) {
-                        break;
+                    
+                    $corretor_escolhido = 0;
+                    foreach ($lista_ordenada as $uid_cand) {
+                        // Verifica se tem algum lead com status_lead = 'Lead' para este corretor
+                        $leads_pendentes = $db->Query("SELECT id_cliente FROM clientes WHERE id_corretor = $uid_cand AND status_lead = 'Lead' LIMIT 1");
+                        if (empty($leads_pendentes)) {
+                            // Não tem lead travado em 'Lead', pode receber!
+                            $corretor_escolhido = $uid_cand;
+                            break;
+                        }
                     }
-                    $lista_ordenada[] = $uid;
-                }
-                
-                $corretor_escolhido = 0;
-                foreach ($lista_ordenada as $uid_cand) {
-                    // Verifica se tem algum lead com status_lead = 'Lead' para este corretor
-                    $leads_pendentes = $db->Query("SELECT id_cliente FROM clientes WHERE id_corretor = $uid_cand AND status_lead = 'Lead' LIMIT 1");
-                    if (empty($leads_pendentes)) {
-                        // Não tem lead travado em 'Lead', pode receber!
-                        $corretor_escolhido = $uid_cand;
-                        break;
+                    
+                    // Se todos os corretores tiverem leads com status 'Lead' (fallback de segurança), pega o próximo da fila original mesmo
+                    if ($corretor_escolhido === 0) {
+                        $corretor_escolhido = $proximo_corretor_id;
                     }
+                    
+                    // 4. Inserir o lead na tabela clientes preenchendo as colunas nome, telefone1, id_empreendimento e id_corretor
+                    $data_hoje = date('Y-m-d');
+                    $sql_ins = "INSERT INTO clientes (nome, telefone1, id_empreendimento, id_corretor, status_lead, origem_lead, data_cadastro, data_ultima_mov) 
+                                VALUES ('$nome_lead', '$telefone1', $id_empreendimento, $corretor_escolhido, 'Lead', 'Distribuição Automática', '$data_hoje', '$data_hoje')";
+                    $db->Query($sql_ins);
+                    
+                    // 5. Ajustar o id na tabela distribuicao_leads
+                    if (empty($tabela_dist)) {
+                        $db->Query("INSERT INTO distribuicao_leads (ultimo_corretor) VALUES ($corretor_escolhido)");
+                    } else {
+                        $db->Query("UPDATE distribuicao_leads SET ultimo_corretor = $corretor_escolhido");
+                    }
+                    
+                    header("Location: index.php?msg_dist=sucesso");
+                    exit;
                 }
-                
-                // Se todos os corretores tiverem leads com status 'Lead' (fallback de segurança), pega o próximo da fila original mesmo
-                if ($corretor_escolhido === 0) {
-                    $corretor_escolhido = $proximo_corretor_id;
-                }
-                
-                // 4. Inserir o lead na tabela clientes preenchendo as colunas nome, telefone1, id_empreendimento e id_corretor
-                $data_hoje = date('Y-m-d');
-                $sql_ins = "INSERT INTO clientes (nome, telefone1, id_empreendimento, id_corretor, status_lead, origem_lead, data_cadastro, data_ultima_mov) 
-                            VALUES ('$nome_lead', '$telefone1', $id_empreendimento, $corretor_escolhido, 'Lead', 'Distribuição Automática', '$data_hoje', '$data_hoje')";
-                $db->Query($sql_ins);
-                
-                // 5. Ajustar o id na tabela distribuicao_leads
-                if (empty($tabela_dist)) {
-                    $db->Query("INSERT INTO distribuicao_leads (ultimo_corretor) VALUES ($corretor_escolhido)");
-                } else {
-                    $db->Query("UPDATE distribuicao_leads SET ultimo_corretor = $corretor_escolhido");
-                }
-                
-                header("Location: index.php?msg_dist=sucesso");
-                exit;
             }
         }
     }
@@ -361,6 +373,13 @@ if ($total_vgv_mensal >= 1000000) {
                 <div class="mb-6 p-4 rounded-lg bg-green-500 text-white shadow-md flex items-center gap-2">
                     <i class="fas fa-check-circle text-xl"></i>
                     <span>Lead distribuído e cadastrado com sucesso para o próximo corretor elegível!</span>
+                </div>
+            <?php endif; ?>
+
+            <?php if(!empty($erro_distribuicao)): ?>
+                <div class="mb-6 p-4 rounded-lg bg-red-500 text-white shadow-md flex items-center gap-2">
+                    <i class="fas fa-exclamation-triangle text-xl"></i>
+                    <span><?php echo htmlspecialchars($erro_distribuicao); ?></span>
                 </div>
             <?php endif; ?>
 
