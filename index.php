@@ -212,6 +212,8 @@ $vgv_por_corretor = [];
 $leads_estagnados = [];
 $vgv_por_empreendimento_corretor = [];
 $leads_estagnados_corretor = [];
+$top5_origens_leads = [];
+$funil_etapas_corretor = [];
 
 if ($modo_visao === 'master') {
     // 1. Top 5 Empreendimentos com mais leads
@@ -238,6 +240,36 @@ if ($modo_visao === 'master') {
                                     WHERE c.status_lead NOT IN ('Venda Fechada', 'Desligamento', 'Perdido', 'Comissão Recebida') 
                                     AND c.data_ultima_mov < '$data_limite_inativo' 
                                     ORDER BY dias_parado DESC");
+
+    // 4. Top 5 Origens de Lead + Outros (Soma) da tabela clientes
+    $todas_origens = $db->Query("SELECT 
+                                    COALESCE(NULLIF(TRIM(origem_lead), ''), 'Não Informado') as origem, 
+                                    COUNT(*) as total 
+                                 FROM clientes 
+                                 GROUP BY origem 
+                                 ORDER BY total DESC");
+
+    if (!empty($todas_origens)) {
+        $contador_origens = 0;
+        $soma_outros = 0;
+        foreach ($todas_origens as $orig) {
+            if ($contador_origens < 5) {
+                $top5_origens_leads[] = [
+                    'origem' => $orig['origem'],
+                    'total' => intval($orig['total'])
+                ];
+            } else {
+                $soma_outros += intval($orig['total']);
+            }
+            $contador_origens++;
+        }
+        if ($soma_outros > 0 || count($todas_origens) > 5) {
+            $top5_origens_leads[] = [
+                'origem' => 'Outros (Soma)',
+                'total' => $soma_outros
+            ];
+        }
+    }
 } else {
     // Visão Corretor: Composição do VGV do mês atual por empreendimento para o usuário logado
     $vgv_por_empreendimento_corretor = $db->Query("SELECT e.nome_empreendimento, SUM(c.vgv) as total_vgv 
@@ -258,6 +290,15 @@ if ($modo_visao === 'master') {
                                              AND c.status_lead NOT IN ('Venda Fechada', 'Desligamento', 'Perdido', 'Comissão Recebida') 
                                              AND c.data_ultima_mov < '$data_limite_inativo' 
                                              ORDER BY dias_parado DESC");
+
+    // Visão Corretor: Quantidade de leads por etapa (status_lead) para o gráfico de funil vertical
+    $funil_etapas_corretor = $db->Query("SELECT 
+                                            COALESCE(NULLIF(TRIM(status_lead), ''), 'Não Definido') as etapa, 
+                                            COUNT(*) as total 
+                                         FROM clientes 
+                                         WHERE id_corretor = $id_usuario_logado 
+                                         GROUP BY etapa 
+                                         ORDER BY total DESC");
 }
 ?>
 <!DOCTYPE html>
@@ -598,6 +639,27 @@ if ($modo_visao === 'master') {
 
             </div>
 
+            <!-- NOVO GRÁFICO / CARD: Top 5 Origens de Lead + Outros (Soma) (Visão Master) -->
+            <div class="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-8">
+                <div class="card-3d bg-white p-6 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center text-teal-600">
+                                <i class="fa-solid fa-bullhorn"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-extrabold text-slate-800">Top 5 Origens de Leads</h3>
+                                <p class="text-xs text-slate-400">Canais de aquisição com maior volume de leads (Demais somados em Outros)</p>
+                            </div>
+                        </div>
+                        <span class="text-xs font-bold px-2.5 py-1 bg-teal-50 text-teal-600 rounded-full">Marketing</span>
+                    </div>
+                    <div class="relative h-64 w-full flex items-center justify-center">
+                        <canvas id="topOrigensLeadsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
             <!-- TABELA BI: Corretores com Leads sem movimentar a mais de 5 dias -->
             <div class="card-3d bg-white rounded-2xl border border-slate-200 overflow-hidden mb-8">
                 <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
@@ -666,8 +728,8 @@ if ($modo_visao === 'master') {
 
             <!-- SEÇÃO DE INTELIGÊNCIA DE BI E GRÁFICOS (VISÃO CORRETOR) -->
             <?php if ($modo_visao === 'corretor'): ?>
-            <div class="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-8">
-                <!-- GRÁFICO: Composição do VGV do Mês Atual por Empreendimento (Pizza 3D) -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <!-- GRÁFICO 1: Composição do VGV do Mês Atual por Empreendimento (Pizza 3D) -->
                 <div class="card-3d bg-white p-6 rounded-2xl border border-slate-200 flex flex-col justify-between">
                     <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                         <div class="flex items-center gap-2.5">
@@ -683,6 +745,25 @@ if ($modo_visao === 'master') {
                     </div>
                     <div class="relative h-72 w-full flex items-center justify-center pie-3d-container">
                         <canvas id="vgvEmpreendimentoCorretorChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- GRÁFICO 2: Funil Vertical de Leads por Etapa (Visão Corretor) -->
+                <div class="card-3d bg-white p-6 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                                <i class="fa-solid fa-filter"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-extrabold text-slate-800">Funil de Leads por Etapa</h3>
+                                <p class="text-xs text-slate-400">Quantidade de leads na sua carteira divididos por status</p>
+                            </div>
+                        </div>
+                        <span class="text-xs font-bold px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-full">Funil Vertical</span>
+                    </div>
+                    <div class="relative h-72 w-full flex items-center justify-center">
+                        <canvas id="funilEtapasCorretorChart"></canvas>
                     </div>
                 </div>
             </div>
@@ -959,6 +1040,66 @@ if ($modo_visao === 'master') {
                 }
             }
         });
+
+        // 3. Gráfico de Barras (Top 5 Origens de Leads + Outros)
+        const topOrigensData = {
+            labels: [
+                <?php 
+                if (!empty($top5_origens_leads)) {
+                    foreach($top5_origens_leads as $item) {
+                        echo "'" . addslashes($item['origem']) . "',";
+                    }
+                }
+                ?>
+            ],
+            datasets: [{
+                label: 'Total de Leads',
+                data: [
+                    <?php 
+                    if (!empty($top5_origens_leads)) {
+                        foreach($top5_origens_leads as $item) {
+                            echo intval($item['total']) . ",";
+                        }
+                    }
+                    ?>
+                ],
+                backgroundColor: 'rgba(13, 148, 136, 0.85)',
+                borderColor: 'rgba(13, 148, 136, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+                barThickness: 22
+            }]
+        };
+
+        const ctxTopOrigens = document.getElementById('topOrigensLeadsChart').getContext('2d');
+        new Chart(ctxTopOrigens, {
+            type: 'bar',
+            data: topOrigensData,
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        padding: 10,
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                        ticks: { precision: 0 }
+                    },
+                    y: {
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
         <?php endif; ?>
 
         <?php if ($modo_visao === 'corretor'): ?>
@@ -1023,6 +1164,66 @@ if ($modo_visao === 'master') {
                                 return ' ' + label + ': ' + formatted;
                             }
                         }
+                    }
+                }
+            }
+        });
+
+        // Gráfico de Funil Vertical (Barreiras / Barras Verticais por Etapa) para a Visão Corretor
+        const funilEtapasData = {
+            labels: [
+                <?php 
+                if (!empty($funil_etapas_corretor)) {
+                    foreach($funil_etapas_corretor as $item) {
+                        echo "'" . addslashes($item['etapa']) . "',";
+                    }
+                }
+                ?>
+            ],
+            datasets: [{
+                label: 'Quantidade de Leads',
+                data: [
+                    <?php 
+                    if (!empty($funil_etapas_corretor)) {
+                        foreach($funil_etapas_corretor as $item) {
+                            echo intval($item['total']) . ",";
+                        }
+                    }
+                    ?>
+                ],
+                backgroundColor: 'rgba(79, 70, 229, 0.85)',
+                borderColor: 'rgba(79, 70, 229, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+                barThickness: 28
+            }]
+        };
+
+        const ctxFunilEtapas = document.getElementById('funilEtapasCorretorChart').getContext('2d');
+        new Chart(ctxFunilEtapas, {
+            type: 'bar',
+            data: funilEtapasData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        padding: 10,
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { font: { size: 11, weight: '600' } }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(226, 232, 240, 0.6)' },
+                        ticks: { precision: 0 }
                     }
                 }
             }
